@@ -1,139 +1,211 @@
-<style>
-    @import url("https://fonts.googleapis.com/css?family=Roboto:300");
-    body {
-        background-color: #c0392b;
-        font-family: 'Roboto', sans-serif;
-        color: #fff;
-    }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Walkie Talkie</title>
 
-    h1 {
-        font-family: 'Roboto', sans-serif;
-        font-weight: 300;
-        font-size: 2.5rem;
-        text-align: center;
-        color: #fff;
-    }
+    <style>
+        body {
+            background-color: #000000;
+            font-family: 'Roboto', sans-serif;
+            color: #fff;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            align-items: center;
+        }
 
-    .play-button {
-        height: 300px;
-        width: 300px;
-        display: block;
-        margin: 60px auto;
-        overflow: hidden;
-        position: relative;
-    }
+        h1 {
+            font-weight: 300;
+            font-size: 2.5rem;
+            text-align: center;
+            color: #fff;
+            margin: 20px;
+        }
 
-    .left {
-        height: 100%;
-        float: left;
-        background-color: #fff;
-        width: 36%;
-        transition: all 0.25s ease;
-        overflow: hidden;
-    }
+        .status-indicator {
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+            color: #666;
+            transition: all 0.3s ease;
+        }
 
-    .triangle-1 {
-        -webkit-transform: translate(0, -100%);
-        transform: translate(0, -100%);
-    }
+        .css-play-button {
+            width: 0;
+            height: 0;
+            border-top: 50px solid transparent;
+            border-bottom: 50px solid transparent;
+            border-left: 80px solid #fff;
+            margin: 60px auto 100px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
 
-    .triangle-2 {
-        -webkit-transform: translate(0, 100%);
-        transform: translate(0, 100%);
-    }
+        .css-play-button:hover {
+            transform: scale(1.1);
+            border-left-color: #00ffff;
+            box-shadow: 0 0 20px #00ffff, 0 0 60px #00ffff;
+        }
 
-    .triangle-1,
-    .triangle-2 {
-        position: absolute;
-        top: 0;
-        right: 0;
-        background-color: transparent;
-        width: 0;
-        height: 0;
-        border-right: 300px solid #c0392b;
-        border-top: 150px solid transparent;
-        border-bottom: 150px solid transparent;
-        transition: -webkit-transform 0.25s ease;
-        transition: transform 0.25s ease;
-        transition: transform 0.25s ease, -webkit-transform 0.25s ease;
-    }
+        .css-play-button.paused {
+            border-left: 0 solid transparent;
+            border-top: 50px solid #fff;
+            border-bottom: 50px solid #fff;
+            width: 30px;
+        }
 
-    .right {
-        height: 100%;
-        float: right;
-        width: 36%;
-        background-color: #fff;
-        transition: all 0.25s ease;
-    }
+        .css-play-button.paused:hover {
+            border-top-color: #00ffff;
+            border-bottom-color: #00ffff;
+            box-shadow: 0 0 20px #00ffff, 0 0 60px #00ffff;
+        }
 
-    .paused .left {
-        width: 50%;
-    }
+        .css-play-button.recording {
+            animation: pulse 1.5s infinite;
+        }
 
-    .paused .right {
-        width: 50%;
-    }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 10px #00ffff; }
+            50% { box-shadow: 0 0 30px #00ffff, 0 0 60px #00ffff; }
+            100% { box-shadow: 0 0 10px #00ffff; }
+        }
 
-    .paused .triangle-1 {
-        -webkit-transform: translate(0, -50%);
-        transform: translate(0, -50%);
-    }
+        /* Mobile Optimizations */
+        @media (max-width: 600px) {
+            .css-play-button {
+                border-top: 30px solid transparent;
+                border-bottom: 30px solid transparent;
+                border-left: 50px solid #fff;
+                margin: 40px auto;
+            }
 
-    .paused .triangle-2 {
-        -webkit-transform: translate(0, 50%);
-        transform: translate(0, 50%);
-    }
-</style>
+            h1 {
+                font-size: 1.8rem;
+                margin: 10px;
+            }
 
-<h1>Browser Walkie-Talkie (Hold to speak)</h1>
-<a class="play-button paused" href="#">
-    <div class="left"></div>
-    <div class="right"></div>
-    <div class="triangle-1"></div>
-    <div class="triangle-2"></div>
-</a>
-<div style="text-align:center">
-    <a>Total user online :</a>
-    <a class="usercount"></a>
-</div>
-<script src="/socket.io/socket.io.js"></script>
-<script src="https://code.jquery.com/jquery-1.11.1.js"></script>
-<script>
-    var socket = io();
-    console.log(socket)
-    socket.on('audioMessage', function (audioChunks) {
-        const audioBlob = new Blob(audioChunks);
-        const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
-        audio.play();
-    });
+            .status-indicator {
+                font-size: 0.85rem;
+            }
+        }
+    </style>
+</head>
 
-    socket.on('user', function (usercount) {
-        $('.usercount').text(usercount)
-    });
+<body>
+    <h1>Push to Talk</h1>
+    <div id="statusIndicator" class="status-indicator">Initializing...</div>
+    <div class="css-play-button" id="playButton"></div>
 
+    <div style="text-align:center; margin: 30px 0;">
+        <a>Total users online :</a>
+        <a class="usercount"></a>
+    </div>
 
-    navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(stream => {
-            const mediaRecorder = new MediaRecorder(stream);
-            var audioChunks = [];
-            $('.play-button').on('mousedown touchstart', function (e) {
-                mediaRecorder.start();
-                $(this).toggleClass("paused");
-            }).bind('mouseup mouseleave touchend', function () {
-                if (mediaRecorder.state !== 'inactive') {
-                    mediaRecorder.stop();
-                    $(this).toggleClass("paused");
-                }
-            });
-            mediaRecorder.addEventListener("dataavailable", event => {
-                audioChunks.push(event.data);
+    <!-- Dependencies -->
+    <script
+    src="https://cdn.socket.io/4.8.1/socket.io.min.js"
+    integrity="sha384-wb1ESiF5Cw1Sx0x2W+Lhpkf4TL6cmtiB2N2Z6cDfIj0pQ5rLkR9QmZ9Zgn5eIwA=="
+    crossorigin="anonymous">
+  </script>
+      <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
 
-            });
-            mediaRecorder.addEventListener("stop", () => {
-                //socket.broadcast.emit('audioMessage', audioChunks);
-                socket.emit('audioMessage', audioChunks);
-                audioChunks = [];
-            });
+    <!-- Application Logic -->
+    <script>
+        const button = document.getElementById('playButton');
+        const statusIndicator = document.getElementById('statusIndicator');
+
+        function updateStatus(message, color = '#666') {
+            statusIndicator.textContent = message;
+            statusIndicator.style.color = color;
+        }
+
+        // Initialize socket connection
+        const socket = io();
+
+        // Setup socket listeners
+        socket.on('connect', () => {
+            updateStatus("Connected", "#00ffff");
         });
-</script>
+
+        socket.on('disconnect', (reason) => {
+            updateStatus(`Disconnected: ${reason}`, "red");
+        });
+
+        socket.on('reconnect', (attemptNumber) => {
+            updateStatus(`Reconnected (attempt ${attemptNumber})`, "#00ffff");
+        });
+
+        socket.on('audioMessage', (audioChunks) => {
+            const audioBlob = new Blob(audioChunks);
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            audio.play();
+        });
+
+        socket.on('user', (usercount) => {
+            $('.usercount').text(usercount);
+        });
+
+        // Microphone handling
+        if (button && statusIndicator) {
+            updateStatus("Requesting microphone access...");
+
+            navigator.mediaDevices
+                .getUserMedia({ audio: true })
+                .then(stream => {
+                    updateStatus("Ready to talk 👇", "#00ffff");
+                    
+                    const mediaRecorder = new MediaRecorder(stream);
+                    let audioChunks = [];
+
+                    mediaRecorder.addEventListener("start", () => {
+                        button.classList.add("recording");
+                    });
+
+                    mediaRecorder.addEventListener("stop", () => {
+                        button.classList.remove("recording");
+                        socket.emit('audioMessage', audioChunks);
+                        audioChunks = [];
+                    });
+
+                    mediaRecorder.addEventListener("dataavailable", event => {
+                        audioChunks.push(event.data);
+                    });
+
+                    // Handle button events
+                    const toggleRecording = () => {
+                        if (mediaRecorder.state === 'recording') {
+                            mediaRecorder.stop();
+                            button.classList.remove("paused");
+                        } else {
+                            mediaRecorder.start();
+                            button.classList.add("paused");
+                        }
+                    };
+
+                    $('#playButton')
+                        .on('mousedown touchstart', toggleRecording)
+                        .on('mouseup mouseleave touchend', toggleRecording);
+                })
+                .catch(err => {
+                    updateStatus("Microphone access blocked", "red");
+                    console.error("Microphone error:", err);
+                });
+        }
+
+        // Register service worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js').then(registration => {
+                console.log('Service Worker registered', registration);
+            }).catch(error => {
+                console.error('Service Worker registration failed:', error);
+            });
+        }
+
+    </script>
+</body>
+</html>

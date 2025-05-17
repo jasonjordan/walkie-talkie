@@ -1,0 +1,5 @@
+walkie-talkie/
+├── index.html
+├── manifest.json
+├── service-worker.js
+├── icon.png  // (192x192px transparent PNG)
