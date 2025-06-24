@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geo-Walkie-Talkie</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: #f0f0f0; color: #333; }
+        #status { margin-bottom: 1rem; font-style: italic; color: #555; }
+        #talk-button {
+            padding: 1rem 2rem;
+            font-size: 1.2rem;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #4CAF50;
+            color: white;
+            user-select: none; /* Prevent text selection on hold */
+            transition: background-color 0.2s;
+        }
+        #talk-button:active, #talk-button.talking {
+            background-color: #FF5722;
+        }
+        #talk-button:disabled {
+            background-color: #9E9E9E;
+            cursor: not-allowed;
+        }
+        #users-list {
+            list-style: none;
+            padding: 0;
+            margin-top: 2rem;
+            width: 80%;
+            max-width: 400px;
+        }
+        .user-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.8rem;
+            background-color: white;
+            border: 1px solid #ddd;
+            margin-bottom: 0.5rem;
+            border-radius: 5px;
+        }
+        .connect-button {
+            padding: 0.4rem 0.8rem;
+            cursor: pointer;
+            border: 1px solid #007BFF;
+            background-color: #007BFF;
+            color: white;
+            border-radius: 3px;
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+        .connect-button:hover {
+             background-color: #0056b3;
+             border-color: #0056b3;
+        }
+        .connect-button.connected {
+            background-color: #28a745;
+            border-color: #28a745;
+            cursor: default;
+        }
+    </style>
+</head>
+<body>
+    <h1>Geo-Walkie-Talkie</h1>
+    <div id="status">Initializing...</div>
+    <button id="talk-button" disabled>Hold to Talk</button>
+    <h2>Nearby Users</h2>
+    <ul id="users-list"></ul>
+
+    <script src="https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/simple-peer@latest/simplepeer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/haversine-distance@latest/haversine-distance.min.js"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const STATUS_DIV = document.getElementById('status');
+            const TALK_BUTTON = document.getElementById('talk-button');
+            const USERS_LIST = document.getElementById('users-list');
+
+            const PEER_RADIUS_KM = 5; // Peers within 5km will be shown
+            // Public STUN servers - essential for NAT traversal
+            const STUN_SERVERS = [
+                'stun:stun.l.google.com:19302',
+                'stun:global.stun.twilio.com:3478'
+            ];
+            const TORRENT_TRACKERS = [
+                'wss://tracker.openwebtorrent.com',
+                'wss://tracker.btorrent.xyz',
+                'wss://tracker.fastcast.nz',
+                'wss://tracker.webtorrent.io'
+            ];
+            // A common info hash for all users of our app to find each other
+            const APP_INFO_HASH = 'geo-walkie-talkie-app-unique-hash-01'; 
+
+            let myPosition = null;
+            let myStream = null;
+            let peers = {}; // key: peerId, value: { id, position, conn }
+            let torrent = null;
+            let client = new WebTorrent({
+                tracker: {
+                    rtcConfig: { iceServers: STUN_SERVERS.map(url => ({ urls: url })) }
+                }
+            });
+            
+            // --- Core Functions ---
+
+            function updateStatus(message) {
+                STATUS_DIV.textContent = message;
+            }
+
+            async function getPermissions() {
+                try {
+                    updateStatus('Requesting microphone access...');
+                    myStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                    // Mute by default until user presses talk button
+                    myStream.getAudioTracks()[0].enabled = false; 
+
+                    updateStatus('Microphone access granted. Getting location...');
+                    const position = await new Promise((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, {
+                            enableHighAccuracy: true,
+                            timeout: 10000,
+                            maximumAge: 0
+                        });
+                    });
+                    
+                    myPosition = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    };
+                    updateStatus('Location found. Connecting to peer network...');
+                    initPeerDiscovery();
+
+                } catch (err) {
+                    updateStatus('Error: ' + err.message);
+                    alert('You must allow microphone and location access to use this app.');
+                }
+            }
+
+            function initPeerDiscovery() {
+                torrent = client.seed(Buffer.from(APP_INFO_HASH), {
+                     announce: TORRENT_TRACKERS
+                });
+
+                torrent.on('wire', (wire) => {
+                    console.log('Connected to a new peer:', wire.peerId);
+                    wire.on('data', (data) => handleWireData(wire, data));
+                });
+                
+                updateStatus('Connected to peer network. Searching for users...');
+                // Announce our presence every 15 seconds
+                setInterval(announcePresence, 15000);
+                announcePresence(); // Announce immediately on join
+            }
+            
+            function announcePresence() {
+                if (torrent) {
+                    const message = {
+                        type: 'announce',
+                        peerId: client.peerId,
+                        position: myPosition
+                    };
+                    // We can't broadcast directly, so we send to all connected wires
+                     torrent.wires.forEach(wire => {
+                        wire.send(JSON.stringify(message));
+                    });
+                }
+            }
+            
+            function handleWireData(wire, data) {
+                 try {
+                    const message = JSON.parse(data.toString());
+                    const peerId = wire.peerId;
+
+                    if (message.type === 'announce') {
+                        handleAnnounceMessage(message);
+                    } else if (message.type === 'signal' && message.to === client.peerId) {
+                        handleSignalMessage(message);
+                    }
+                } catch (e) { /* Ignore non-JSON or malformed messages */ }
+            }
+
+            function handleAnnounceMessage(message) {
+                if (message.peerId === client.peerId) return;
+
+                const distance = haversineDistance(myPosition, message.position);
+                const isWithinRadius = distance <= PEER_RADIUS_KM * 1000;
+
+                if (isWithinRadius && !peers[message.peerId]) {
+                    console.log(`New peer found within radius: ${message.peerId}`);
+                    peers[message.peerId] = { id: message.peerId, position: message.position, conn: null };
+                    updateUsersList();
+                } else if (!isWithinRadius && peers[message.peerId]) {
+                    console.log(`Peer moved out of range: ${message.peerId}`);
+                    if (peers[message.peerId].conn) peers[message.peerId].conn.destroy();
+                    delete peers[message.peerId];
+                    updateUsersList();
+                }
+            }
+
+            function handleSignalMessage(message) {
+                const peer = peers[message.from];
+                // If we have a peer connection object and it's not yet connected, signal it
+                if (peer && peer.conn && !peer.conn.destroyed) {
+                    peer.conn.signal(message.signal);
+                }
+            }
+            
+            function updateUsersList() {
+                USERS_LIST.innerHTML = '';
+                if (Object.keys(peers).length === 0) {
+                    USERS_LIST.innerHTML = '<li>No users found in your radius yet.</li>';
+                }
+
+                for (const peerId in peers) {
+                    const peer = peers[peerId];
+                    const li = document.createElement('li');
+                    li.className = 'user-item';
+                    
+                    const distance = (haversineDistance(myPosition, peer.position) / 1000).toFixed(2);
+                    li.innerHTML = `<span>Peer ${peer.id.substring(0, 6)}... (${distance} km away)</span>`;
+                    
+                    const connectButton = document.createElement('button');
+                    connectButton.className = 'connect-button';
+                    
+                    if (peer.conn && peer.conn.connected) {
+                        connectButton.textContent = 'Connected';
+                        connectButton.classList.add('connected');
+                        connectButton.disabled = true;
+                    } else if (peer.conn && !peer.conn.destroyed) {
+                        connectButton.textContent = 'Connecting...';
+                        connectButton.disabled = true;
+                    } else {
+                        connectButton.textContent = 'Connect';
+                    }
+
+                    connectButton.onclick = () => {
+                        if (!peer.conn || peer.conn.destroyed) {
+                            connectToPeer(peer.id);
+                        }
+                    };
+
+                    li.appendChild(connectButton);
+                    USERS_LIST.appendChild(li);
+                }
+            }
+
+            function connectToPeer(peerId) {
+                updateStatus(`Connecting to peer ${peerId.substring(0, 6)}...`);
+                
+                const peerConn = new SimplePeer({
+                    initiator: true,
+                    trickle: false, // For simplicity
+                    stream: myStream,
+                    config: { iceServers: STUN_SERVERS.map(url => ({ urls: url })) }
+                });
+
+                peers[peerId].conn = peerConn;
+                updateUsersList(); // Show "Connecting..." status
+
+                peerConn.on('signal', signalData => {
+                    const wire = torrent.wires.find(w => w.peerId === peerId);
+                    if (wire) {
+                         wire.send(JSON.stringify({
+                             type: 'signal',
+                             from: client.peerId,
+                             to: peerId, // Let the receiver know who this is for
+                             signal: signalData
+                         }));
+                    }
+                });
+
+                setupPeerEvents(peerConn, peerId);
+            }
+            
+            function setupPeerEvents(peerConn, peerId) {
+                 peerConn.on('connect', () => {
+                    updateStatus(`Connected to ${peerId.substring(0, 6)}`);
+                    TALK_BUTTON.disabled = false;
+                    updateUsersList();
+                });
+
+                peerConn.on('stream', stream => {
+                    console.log('Receiving stream from', peerId);
+                    const audio = document.createElement('audio');
+                    audio.srcObject = stream;
+                    audio.play();
+                    document.body.appendChild(audio); // Append to play, could be hidden
+                });
+
+                peerConn.on('close', () => {
+                    updateStatus(`Disconnected from ${peerId.substring(0, 6)}`);
+                    if(peers[peerId]) peers[peerId].conn = null;
+                    // Disable talk button if no active connections
+                    if (!Object.values(peers).some(p => p.conn && p.conn.connected)) {
+                        TALK_BUTTON.disabled = true;
+                    }
+                    updateUsersList();
+                });
+                
+                peerConn.on('error', err => {
+                    console.error(`Connection error with ${peerId}:`, err);
+                    if(peers[peerId]) peers[peerId].conn = null;
+                    updateUsersList();
+                });
+            }
+
+            // Listen for incoming connection offers
+            client.on('torrent', (t) => {
+                 if(t.infoHash === APP_INFO_HASH) {
+                    t.on('wire', (wire) => {
+                        wire.on('data', (data) => {
+                            try {
+                                const message = JSON.parse(data.toString());
+                                // If someone signals us and we don't have a connection object for them yet
+                                if (message.type === 'signal' && message.to === client.peerId && !peers[message.from]?.conn) {
+                                     console.log(`Accepting connection from ${message.from}`);
+                                     const peer = peers[message.from];
+                                     if (!peer) return; // Should not happen if announce works
+
+                                     const peerConn = new SimplePeer({
+                                        initiator: false,
+                                        trickle: false,
+                                        stream: myStream,
+                                        config: { iceServers: STUN_SERVERS.map(url => ({ urls: url })) }
+                                    });
+
+                                    peer.conn = peerConn;
+                                    peerConn.signal(message.signal); // Accept the signal
+                                    setupPeerEvents(peerConn, message.from);
+                                }
+                            } catch(e) {}
+                        });
+                    });
+                 }
+            });
+
+
+            // --- Event Listeners ---
+            TALK_BUTTON.addEventListener('mousedown', () => {
+                if (myStream && !TALK_BUTTON.disabled) {
+                    myStream.getAudioTracks()[0].enabled = true;
+                    TALK_BUTTON.classList.add('talking');
+                    TALK_BUTTON.textContent = "Talking...";
+                }
+            });
+
+            TALK_BUTTON.addEventListener('mouseup', () => {
+                if (myStream && !TALK_BUTTON.disabled) {
+                    myStream.getAudioTracks()[0].enabled = false;
+                    TALK_BUTTON.classList.remove('talking');
+                    TALK_BUTTON.textContent = "Hold to Talk";
+                }
+            });
+            TALK_BUTTON.addEventListener('mouseleave', () => { // In case user drags mouse away
+                 if (myStream && !TALK_BUTTON.disabled) {
+                    myStream.getAudioTracks()[0].enabled = false;
+                    TALK_BUTTON.classList.remove('talking');
+                    TALK_BUTTON.textContent = "Hold to Talk";
+                }
+            });
+
+            // --- Initial state ---
+            getPermissions();
+        });
+    </script>
+</body>
+</html>
