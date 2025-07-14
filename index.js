@@ -1,15 +1,17 @@
-var app = require("express")();
-var http = require("http").Server(app);
-
-var io = require("socket.io")(http);
+const express = require('express');
+const app = express();
+const http = require('http');
+const server = http.createServer(app);
+const { Server } = require("socket.io");
+const io = new Server(server);
 
 var Usercounter = 0;
 
-app.get("/", function(req, res) {
-  res.sendFile(__dirname + "/index.html");
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/index.html');
 });
 
-io.on("connection", function(socket) {
+io.on("connection", (socket) => {
   Usercounter = Usercounter + 1;
   io.emit("user", Usercounter);
   console.log("a user is connected");
@@ -24,6 +26,6 @@ io.on("connection", function(socket) {
   });
 });
 
-http.listen(3000, function() {
-  console.log("listening to port:3000");
+server.listen(3000, () => {
+  console.log('listening on *:3000');
 });
